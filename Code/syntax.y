@@ -1,168 +1,590 @@
 %{
 #include <stdio.h>
-#include "lex.yy.c"
+#include <stdlib.h>
+#include <string.h>
 void yyerror(const char *s);
 int yylex(void);
 extern char* yytext;
-extern YYLTYPE yylloc;
+extern int yylineno;
+
+struct node {
+    char *token;
+    char *name;
+    struct node *children[10]; /* 假设每个节点最多有10个子节点 */
+    int child_count;
+    int line_no; /* 行号 */
+};
+
+static struct node *create_node(const char *symbol_name, int line_no) {
+  struct node *n = (struct node *)malloc(sizeof(struct node));
+  if (!n) {
+    return NULL;
+  }
+  n->token = strdup(symbol_name);
+  n->name = strdup(symbol_name);
+  n->child_count = 0;
+  n->line_no = line_no;
+  return n;
+}
+
+static void ensure_token(struct node *n, const char *symbol_name) {
+  if (!n) {
+    return;
+  }
+  if (!n->token) {
+    n->token = strdup(symbol_name);
+  }
+  if (!n->name) {
+    n->name = strdup(symbol_name);
+  }
+}
+
+static void add_child(struct node *parent, struct node *child) {
+  if (parent && child && parent->child_count < 10) {
+    parent->children[parent->child_count++] = child;
+    }
+}
+
+static struct node *make_nonterminal(const char *symbol_name) {
+  return create_node(symbol_name, yylineno);
+}
+
+#include "lex.yy.c"
 %}
 %union{
-  int type_int;
-  float type_float;
-  double type_double;
+  struct node *n;
 }
 
 %locations
 /* 声明终结符 (Tokens) */
-%token <type_int>INT
-%token <type_float>FLOAT
-%token ID
-%token TYPE STRUCT RETURN IF ELSE WHILE
-%token SEMI COMMA ASSIGNOP RELOP PLUS MINUS STAR DIV
-%token AND OR DOT NOT LP RP LB RB LC RC
+%token <n> INT FLOAT ID
+%token <n> TYPE STRUCT RETURN IF ELSE WHILE
+%token <n> SEMI COMMA ASSIGNOP RELOP PLUS MINUS STAR DIV
+%token <n> AND OR DOT NOT LP RP LB RB LC RC
+
+%type <n> Program ExtDefList ExtDef ExtDecList Specifier StructSpecifier
+%type <n> OptTag Tag VarDec FunDec VarList ParamDec CompSt StmtList Stmt
+%type <n> DefList Def DecList Dec Exp Args
 
 /* * 运算符优先级与结合性声明 (数字越大优先级越高)
  * 解决表达式规约时的二义性问题 
  */
-%right ASSIGNOP          /* 优先级 8: 赋值，右结合 [cite: 150] */
-%left OR                 /* 优先级 7: 逻辑或，左结合 [cite: 150] */
-%left AND                /* 优先级 6: 逻辑与，左结合 [cite: 150] */
-%left RELOP              /* 优先级 5: 关系运算，左结合 [cite: 150] */
-%left PLUS MINUS         /* 优先级 4: 加减，左结合 [cite: 150] */
-%left STAR DIV           /* 优先级 3: 乘除，左结合 [cite: 150] */
-%right NOT UMINUS        /* 优先级 2: 逻辑非与取负(一元)，右结合 [cite: 150] */
-%left LP RP LB RB DOT    /* 优先级 1: 括号与访问符，左结合 [cite: 150] */
+%right ASSIGNOP          /* 优先级 8: 赋值，右结合 */
+%left OR                 /* 优先级 7: 逻辑或，左结合 */
+%left AND                /* 优先级 6: 逻辑与，左结合 */
+%left RELOP              /* 优先级 5: 关系运算，左结合 */
+%left PLUS MINUS         /* 优先级 4: 加减，左结合 */
+%left STAR DIV           /* 优先级 3: 乘除，左结合 */
+%right NOT UMINUS        /* 优先级 2: 逻辑非与取负(一元)，右结合 */
+%left LP RP LB RB DOT    /* 优先级 1: 括号与访问符，左结合 */
 
 /* 解决 IF-ELSE 悬挂问题 */
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 
 %%
-/* High-level Definitions [cite: 36] */
+/* High-level Definitions */
 Program:
-      ExtDefList              /* [cite: 37] */
+      ExtDefList
+      {
+          $$ = make_nonterminal("Program");
+          add_child($$, $1);
+      }
     ;
 
 ExtDefList:
-      ExtDef ExtDefList       /* [cite: 38] */
-    | /* empty */             /* [cite: 39] */
+      ExtDef ExtDefList
+      {
+          $$ = make_nonterminal("ExtDefList");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | /* empty */
+      {
+          $$ = make_nonterminal("ExtDefList");
+      }
     ;
 
 ExtDef:
-      Specifier ExtDecList SEMI /* [cite: 41] */
-    | Specifier SEMI          /* [cite: 42] */
-    | Specifier FunDec CompSt   /* [cite: 43] */
+      Specifier ExtDecList SEMI
+      {
+          $$ = make_nonterminal("ExtDef");
+          ensure_token($3, "SEMI");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Specifier SEMI
+      {
+          $$ = make_nonterminal("ExtDef");
+          ensure_token($2, "SEMI");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | Specifier FunDec CompSt
+      {
+          $$ = make_nonterminal("ExtDef");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
 ExtDecList:
-      VarDec                  /* [cite: 44] */
-    | VarDec COMMA ExtDecList /* [cite: 45] */
+      VarDec
+      {
+          $$ = make_nonterminal("ExtDecList");
+          add_child($$, $1);
+      }
+    | VarDec COMMA ExtDecList
+      {
+          $$ = make_nonterminal("ExtDecList");
+          ensure_token($2, "COMMA");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
-/* Specifiers [cite: 46] */
+/* Specifiers */
 Specifier:
-      TYPE                    /* [cite: 47] */
-    | StructSpecifier         /* [cite: 48] */
+      TYPE
+      {
+          $$ = make_nonterminal("Specifier");
+          ensure_token($1, "TYPE");
+          add_child($$, $1);
+      }
+    | StructSpecifier
+      {
+          $$ = make_nonterminal("Specifier");
+          add_child($$, $1);
+      }
     ;
 
 StructSpecifier:
-      STRUCT OptTag LC DefList RC /* [cite: 49] */
-    | STRUCT Tag              /* [cite: 50] */
+      STRUCT OptTag LC DefList RC
+      {
+          $$ = make_nonterminal("StructSpecifier");
+          ensure_token($1, "STRUCT");
+          ensure_token($3, "LC");
+          ensure_token($5, "RC");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+          add_child($$, $5);
+      }
+    | STRUCT Tag
+      {
+          $$ = make_nonterminal("StructSpecifier");
+          ensure_token($1, "STRUCT");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
     ;
 
 OptTag:
-      ID                      /* [cite: 52] */
-    | /* empty */             /* [cite: 53] */
+      ID
+      {
+          $$ = make_nonterminal("OptTag");
+          ensure_token($1, "ID");
+          add_child($$, $1);
+      }
+    | /* empty */
+      {
+          $$ = make_nonterminal("OptTag");
+      }
     ;
 
 Tag:
-      ID                      /* [cite: 54] */
+      ID
+      {
+          $$ = make_nonterminal("Tag");
+          ensure_token($1, "ID");
+          add_child($$, $1);
+      }
     ;
 
-/* Declarators [cite: 55] */
+/* Declarators */
 VarDec:
-      ID                      /* [cite: 56] */
-    | VarDec LB INT RB        /* [cite: 61] */
+      ID
+      {
+          $$ = make_nonterminal("VarDec");
+          ensure_token($1, "ID");
+          add_child($$, $1);
+      }
+    | VarDec LB INT RB
+      {
+          $$ = make_nonterminal("VarDec");
+          ensure_token($2, "LB");
+          ensure_token($3, "INT");
+          ensure_token($4, "RB");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+      }
     ;
 
 FunDec:
-      ID LP VarList RP        /* [cite: 62] */
-    | ID LP RP                /* [cite: 63] */
+      ID LP VarList RP
+      {
+          $$ = make_nonterminal("FunDec");
+          ensure_token($1, "ID");
+          ensure_token($2, "LP");
+          ensure_token($4, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+      }
+    | ID LP RP
+      {
+          $$ = make_nonterminal("FunDec");
+          ensure_token($1, "ID");
+          ensure_token($2, "LP");
+          ensure_token($3, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
 VarList:
-      ParamDec COMMA VarList  /* [cite: 66] */
-    | ParamDec                /* [cite: 65] */
+      ParamDec COMMA VarList
+      {
+          $$ = make_nonterminal("VarList");
+          ensure_token($2, "COMMA");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | ParamDec
+      {
+          $$ = make_nonterminal("VarList");
+          add_child($$, $1);
+      }
     ;
 
 ParamDec:
-      Specifier VarDec        /* [cite: 67] */
+      Specifier VarDec
+      {
+          $$ = make_nonterminal("ParamDec");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
     ;
 
-/* Statements [cite: 68] */
+/* Statements */
 CompSt:
-      LC DefList StmtList RC  /* [cite: 69] */
+      LC DefList StmtList RC
+      {
+          $$ = make_nonterminal("CompSt");
+          ensure_token($1, "LC");
+          ensure_token($4, "RC");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+      }
     ;
 
 StmtList:
-      Stmt StmtList           /* [cite: 70] */
-    | /* empty */             /* [cite: 71] */
+      Stmt StmtList
+      {
+          $$ = make_nonterminal("StmtList");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | /* empty */
+      {
+          $$ = make_nonterminal("StmtList");
+      }
     ;
 
 Stmt:
-      Exp SEMI                /* [cite: 72] */
-    | CompSt                  /* [cite: 73] */
-    | RETURN Exp SEMI         /* [cite: 74] */
-    | IF LP Exp RP Stmt %prec LOWER_THAN_ELSE /* [cite: 75] */
-    | IF LP Exp RP Stmt ELSE Stmt /* [cite: 76] */
-    | WHILE LP Exp RP Stmt    /* [cite: 77] */
+      Exp SEMI
+      {
+          $$ = make_nonterminal("Stmt");
+          ensure_token($2, "SEMI");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | CompSt
+      {
+          $$ = make_nonterminal("Stmt");
+          add_child($$, $1);
+      }
+    | RETURN Exp SEMI
+      {
+          $$ = make_nonterminal("Stmt");
+          ensure_token($1, "RETURN");
+          ensure_token($3, "SEMI");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | IF LP Exp RP Stmt %prec LOWER_THAN_ELSE
+      {
+          $$ = make_nonterminal("Stmt");
+          ensure_token($1, "IF");
+          ensure_token($2, "LP");
+          ensure_token($4, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+          add_child($$, $5);
+      }
+    | IF LP Exp RP Stmt ELSE Stmt
+      {
+          $$ = make_nonterminal("Stmt");
+          ensure_token($1, "IF");
+          ensure_token($2, "LP");
+          ensure_token($4, "RP");
+          ensure_token($6, "ELSE");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+          add_child($$, $5);
+          add_child($$, $6);
+          add_child($$, $7);
+      }
+    | WHILE LP Exp RP Stmt
+      {
+          $$ = make_nonterminal("Stmt");
+          ensure_token($1, "WHILE");
+          ensure_token($2, "LP");
+          ensure_token($4, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+          add_child($$, $5);
+      }
     ;
 
-/* Local Definitions [cite: 78] */
+/* Local Definitions */
 DefList:
-      Def DefList             /* [cite: 79] */
-    | /* empty */             /* [cite: 80] */
+      Def DefList
+      {
+          $$ = make_nonterminal("DefList");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | /* empty */
+      {
+          $$ = make_nonterminal("DefList");
+      }
     ;
 
 Def:
-      Specifier DecList SEMI  /* [cite: 81] */
+      Specifier DecList SEMI
+      {
+          $$ = make_nonterminal("Def");
+          ensure_token($3, "SEMI");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
 DecList:
-      Dec                     /* [cite: 81] */
-    | Dec COMMA DecList       /* [cite: 82] */
+      Dec
+      {
+          $$ = make_nonterminal("DecList");
+          add_child($$, $1);
+      }
+    | Dec COMMA DecList
+      {
+          $$ = make_nonterminal("DecList");
+          ensure_token($2, "COMMA");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
 Dec:
-      VarDec                  /* [cite: 83] */
-    | VarDec ASSIGNOP Exp     /* [cite: 84] */
+      VarDec
+      {
+          $$ = make_nonterminal("Dec");
+          add_child($$, $1);
+      }
+    | VarDec ASSIGNOP Exp
+      {
+          $$ = make_nonterminal("Dec");
+          ensure_token($2, "ASSIGNOP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
     ;
 
-/* Expressions [cite: 85] */
+/* Expressions */
 Exp:
-      Exp ASSIGNOP Exp        /* [cite: 86] */
-    | Exp AND Exp             /* [cite: 87] */
-    | Exp OR Exp              /* [cite: 88] */
-    | Exp RELOP Exp           /* [cite: 89] */
-    | Exp PLUS Exp            /* [cite: 90] */
-    | Exp MINUS Exp           /* [cite: 91] */
-    | Exp STAR Exp            /* [cite: 92] */
-    | Exp DIV Exp             /* [cite: 93] */
-    | LP Exp RP               /* [cite: 94] */
-    | MINUS Exp %prec UMINUS  /* 取负运算，依赖前面声明的优先级 [cite: 95] */
-    | NOT Exp                 /* [cite: 96] */
-    | ID LP Args RP           /* [cite: 97] */
-    | ID LP RP                /* [cite: 98] */
-    | Exp LB Exp RB           /* [cite: 99] */
-    | Exp DOT ID              /* [cite: 100] */
-    | ID                      /* [cite: 101] */
-    | INT                     /* [cite: 102] */
-    | FLOAT                   /* [cite: 103] */
+      Exp ASSIGNOP Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "ASSIGNOP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp AND Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "AND");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp OR Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "OR");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp RELOP Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "RELOP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp PLUS Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "PLUS");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp MINUS Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "MINUS");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp STAR Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "STAR");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp DIV Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "DIV");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | LP Exp RP
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "LP");
+          ensure_token($3, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | MINUS Exp %prec UMINUS  /* 取负运算，依赖前面声明的优先级 */
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "MINUS");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | NOT Exp
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "NOT");
+          add_child($$, $1);
+          add_child($$, $2);
+      }
+    | ID LP Args RP
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "ID");
+          ensure_token($2, "LP");
+          ensure_token($4, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+      }
+    | ID LP RP
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "ID");
+          ensure_token($2, "LP");
+          ensure_token($3, "RP");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp LB Exp RB
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "LB");
+          ensure_token($4, "RB");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+          add_child($$, $4);
+      }
+    | Exp DOT ID
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($2, "DOT");
+          ensure_token($3, "ID");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | ID
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "ID");
+          add_child($$, $1);
+      }
+    | INT
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "INT");
+          add_child($$, $1);
+      }
+    | FLOAT
+      {
+          $$ = make_nonterminal("Exp");
+          ensure_token($1, "FLOAT");
+          add_child($$, $1);
+      }
     ;
 
 Args:
-      Exp COMMA Args          /* [cite: 104] */
-    | Exp                     /* [cite: 105] */
+      Exp COMMA Args
+      {
+          $$ = make_nonterminal("Args");
+          ensure_token($2, "COMMA");
+          add_child($$, $1);
+          add_child($$, $2);
+          add_child($$, $3);
+      }
+    | Exp
+      {
+          $$ = make_nonterminal("Args");
+          add_child($$, $1);
+      }
     ;
 %%
 
